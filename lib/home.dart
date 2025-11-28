@@ -25,8 +25,11 @@ class _HomeState extends State<Home> {
 
   Future<void> _loadProfile() async {
     final userId = supabase.auth.currentUser!.id;
-    final data =
-    await supabase.from("profiles").select().eq("id", userId).single();
+    final data = await supabase
+        .from("profiles")
+        .select()
+        .eq("id", userId)
+        .single();
 
     setState(() {
       profile = data;
@@ -45,7 +48,6 @@ class _HomeState extends State<Home> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-
               // Header
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -103,7 +105,7 @@ class _HomeState extends State<Home> {
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
                         ),
-                      )
+                      ),
                     ],
                   ),
                 ),
@@ -141,15 +143,20 @@ class _HomeState extends State<Home> {
                     icon: Icons.support_agent,
                     label: "Support",
                     onTap: () {
+                      final currentUserId = supabase
+                          .auth
+                          .currentUser!
+                          .id; // get logged-in user id
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const SupportChatPage(
+                          builder: (_) => SupportChatPage(
                             rideId: "temp",
                             peerUserId: "support",
+                            myUserId:
+                                currentUserId, // ✅ pass required parameter
                           ),
                         ),
-
                       );
                     },
                   ),

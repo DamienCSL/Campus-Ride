@@ -1,84 +1,149 @@
-// support_chat.dart
+// lib/support_chat.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:realtime_client/realtime_client.dart' show RealtimeChannel;
 import 'supabase_service.dart';
 
 class SupportChatPage extends StatefulWidget {
   final String rideId;
-  final String peerUserId; // the other user's id (driver or rider)
-  const SupportChatPage({Key? key, required this.rideId, required this.peerUserId}) : super(key: key);
+  final String peerUserId; // the other user's id
+  final String myUserId;
+
+  const SupportChatPage({
+    Key? key,
+    required this.rideId,
+    required this.peerUserId,
+    required this.myUserId,
+  }) : super(key: key);
 
   @override
   State<SupportChatPage> createState() => _SupportChatPageState();
 }
 
 class _SupportChatPageState extends State<SupportChatPage> {
-  final supabase = Supabase.instance.client;
-  final TextEditingController ctrl = TextEditingController();
-  List<Map<String,dynamic>> messages = [];
-  RealtimeChannel? _sub;
+  RealtimeChannel? _channel;
+  final List<Map<String, dynamic>> messages = [];
+  final TextEditingController _ctrl = TextEditingController();
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
-    _sub = SupabaseService.subscribeMessages(widget.rideId, (m) {
-      setState(() => messages.add(m));
-    });
+    _initChat();
   }
 
-  Future<void> _loadMessages() async {
-    final res = await supabase.from('messages').select().eq('ride_id', widget.rideId).order('created_at', ascending: true);
-    setState(() {
-      messages = List<Map<String,dynamic>>.from(res as List<dynamic>);
+  Future<void> _initChat() async {
+    // 1) load history
+    try {
+      final hist = await SupabaseService.fetchMessages(widget.rideId);
+      setState(() {
+        messages.addAll(hist);
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _loading = false;
+      });
+    }
+
+    // 2) subscribe to realtime inserts for this ride
+    _channel = SupabaseService.subscribeMessages(widget.rideId, (m) {
+      // payload is a map representing the inserted row
+      setState(() {
+        messages.add(m);
+      });
     });
   }
 
   @override
   void dispose() {
-    if (_sub != null) supabase.removeChannel(_sub!);
-    ctrl.dispose();
+    _ctrl.dispose();
+    SupabaseService.unsubscribeChannel(_channel);
     super.dispose();
   }
 
-  Future<void> _send() async {
-    final txt = ctrl.text.trim();
-    if (txt.isEmpty) return;
-    await SupabaseService.sendMessage(rideId: widget.rideId, toUserId: widget.peerUserId, message: txt);
-    ctrl.clear();
+  Future<void> _sendMessage(String txt) async {
+    if (txt.trim().isEmpty) return;
+    try {
+      await SupabaseService.sendMessage(
+        rideId: widget.rideId,
+        fromUserId: widget.myUserId,
+        toUserId: widget.peerUserId,
+        content: txt.trim(),
+      );
+      _ctrl.clear();
+      // message will arrive via realtime subscription and be added to `messages`
+    } catch (e) {
+      // show error if needed
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send message')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final uid = supabase.auth.currentUser!.id;
     return Scaffold(
-      appBar: AppBar(title: const Text('Chat')),
+      appBar: AppBar(
+        title: Text('Support Chat'),
+      ),
       body: Column(
         children: [
-          Expanded(child: ListView(
-            padding: const EdgeInsets.all(12),
-            children: messages.map((m) {
-              final isMe = m['from_user'] == uid;
-              return Align(
-                alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(color: isMe ? Colors.green[100] : Colors.grey[200], borderRadius: BorderRadius.circular(8)),
-                  child: Text(m['message']),
-                ),
-              );
-            }).toList(),
-          )),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                Expanded(child: TextField(controller: ctrl, decoration: const InputDecoration(hintText: 'Type message'))),
-                IconButton(icon: const Icon(Icons.send), onPressed: _send)
-              ],
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.builder(
+                    itemCount: messages.length,
+                    itemBuilder: (context, idx) {
+                      final msg = messages[idx];
+                      final from = msg['from_user_id']?.toString() ?? '';
+                      final content = msg['content']?.toString() ?? '';
+                      final isMine = from == widget.myUserId;
+                      return Align(
+                        alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: isMine ? Colors.blueAccent : Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            content,
+                            style: TextStyle(color: isMine ? Colors.white : Colors.black87),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _ctrl,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (t) => _sendMessage(t),
+                      decoration: const InputDecoration(
+                        hintText: 'Type a message',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: () => _sendMessage(_ctrl.text),
+                    child: const Text('Send'),
+                  ),
+                ],
+              ),
             ),
-          )
+          ),
         ],
       ),
     );

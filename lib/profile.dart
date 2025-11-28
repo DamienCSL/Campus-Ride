@@ -1,7 +1,9 @@
+// lib/profile.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'edit_profile.dart';
 import 'login.dart';
+import 'change_password.dart';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({Key? key}) : super(key: key);
@@ -49,9 +51,7 @@ class _ProfilePageState extends State<ProfilePage> {
     const campusGreen = Color(0xFF00BFA6);
 
     if (profile == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final avatarUrl = profile!['avatar_url'];
@@ -68,8 +68,9 @@ class _ProfilePageState extends State<ProfilePage> {
             CircleAvatar(
               radius: 50,
               backgroundColor: Colors.grey[300],
-              backgroundImage:
-              avatarUrl != null ? NetworkImage(avatarUrl) : null,
+              backgroundImage: avatarUrl != null
+                  ? NetworkImage(avatarUrl)
+                  : null,
               child: avatarUrl == null
                   ? const Icon(Icons.person, size: 50)
                   : null,
@@ -100,7 +101,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   MaterialPageRoute(
                     builder: (_) => EditProfilePage(currentProfile: profile!),
                   ),
-                ).then((_) => loadProfile());
+                ).then((_) => loadProfile()); // refresh after editing
               },
             ),
 
@@ -108,7 +109,10 @@ class _ProfilePageState extends State<ProfilePage> {
               leading: const Icon(Icons.lock),
               title: const Text("Change Password"),
               onTap: () {
-                // optional later
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ChangePasswordPage()),
+                );
               },
             ),
 
@@ -120,8 +124,12 @@ class _ProfilePageState extends State<ProfilePage> {
                 onPressed: logout,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.red,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
-                child: const Text("Logout"),
+                child: const Text("Logout", style: TextStyle(fontSize: 18)),
               ),
             ),
           ],
