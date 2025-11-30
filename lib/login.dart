@@ -22,26 +22,41 @@ class _LoginPageState extends State<Login> {
   // login.dart (only function snippet shown—insert into your file)
   Future<void> _login() async {
     try {
-      final res = await Supabase.instance.client.auth.signInWithPassword(
+      final res = await supabase.auth.signInWithPassword(
         email: emailCtrl.text.trim(),
         password: passwordCtrl.text.trim(),
       );
+
       final userId = res.user?.id;
       if (userId == null) throw 'Login failed';
 
-      final profile = await Supabase.instance.client.from('profiles').select('role').eq('id', userId).maybeSingle();
+      final profile = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .maybeSingle();
+
       final role = profile?['role'] ?? 'rider';
 
+      if (!mounted) return;
+
       if (role == 'driver') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DriverDashboard()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DriverDashboard()),
+        );
       } else {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Home()));
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const Home()),
+        );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Login failed: $e')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -56,11 +71,15 @@ class _LoginPageState extends State<Login> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const SizedBox(height: 20),
-              const Text("Welcome Back 👋",
-                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              const Text(
+                "Welcome Back 👋",
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 10),
-              const Text("Login to continue",
-                  style: TextStyle(fontSize: 16, color: Colors.grey)),
+              const Text(
+                "Login to continue",
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
               const SizedBox(height: 40),
 
               _buildInputField(
@@ -95,7 +114,8 @@ class _LoginPageState extends State<Login> {
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     backgroundColor: campusGreen,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   onPressed: _login,
                   child: const Text(
@@ -148,13 +168,13 @@ class _LoginPageState extends State<Login> {
           icon: Icon(icon, color: Colors.grey),
           suffixIcon: isPassword
               ? IconButton(
-            icon: Icon(_obscurePassword
-                ? Icons.visibility_off
-                : Icons.visibility),
-            color: Colors.grey,
-            onPressed: () =>
-                setState(() => _obscurePassword = !_obscurePassword),
-          )
+                  icon: Icon(
+                    _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                  ),
+                  color: Colors.grey,
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
+                )
               : null,
           border: InputBorder.none,
           hintText: hint,
