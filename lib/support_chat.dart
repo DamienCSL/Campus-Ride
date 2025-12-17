@@ -26,6 +26,7 @@ class _SupportChatPageState extends State<SupportChatPage> {
   final List<Map<String, dynamic>> messages = [];
   final TextEditingController _ctrl = TextEditingController();
   bool _loading = true;
+  String _chatStatus = 'open';
 
   @override
   void initState() {
@@ -34,7 +35,7 @@ class _SupportChatPageState extends State<SupportChatPage> {
   }
 
   Future<void> _initChat() async {
-    // 1) load history
+    // 1) load history and chat status
     try {
       final hist = await SupabaseService.fetchMessages(widget.rideId);
       setState(() {
@@ -86,7 +87,11 @@ class _SupportChatPageState extends State<SupportChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Support Chat'),
+        title: const Text('Support Chat'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: Column(
         children: [
@@ -94,11 +99,45 @@ class _SupportChatPageState extends State<SupportChatPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : ListView.builder(
-                    itemCount: messages.length,
+                    itemCount: _chatStatus == 'closed' 
+                        ? messages.length + 1
+                        : messages.length,
                     itemBuilder: (context, idx) {
+                      // Show closed message at the end if chat is closed
+                      if (_chatStatus == 'closed' && idx == messages.length) {
+                        return Center(
+                          child: Container(
+                            margin: const EdgeInsets.symmetric(vertical: 20),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[200],
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Column(
+                              children: [
+                                const Icon(
+                                  Icons.check_circle,
+                                  color: Colors.green,
+                                  size: 32,
+                                ),
+                                const SizedBox(height: 8),
+                                const Text(
+                                  'Admin has marked this chat as done',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+
                       final msg = messages[idx];
-                      final from = msg['from_user_id']?.toString() ?? '';
-                      final content = msg['content']?.toString() ?? '';
+                      final from = msg['from_user']?.toString() ?? '';
+                      final content = msg['message']?.toString() ?? '';
                       final isMine = from == widget.myUserId;
                       return Align(
                         alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
@@ -118,32 +157,33 @@ class _SupportChatPageState extends State<SupportChatPage> {
                     },
                   ),
           ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _ctrl,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (t) => _sendMessage(t),
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message',
-                        border: OutlineInputBorder(),
-                        isDense: true,
+          if (_chatStatus != 'closed')
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _ctrl,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (t) => _sendMessage(t),
+                        decoration: const InputDecoration(
+                          hintText: 'Type a message',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: () => _sendMessage(_ctrl.text),
-                    child: const Text('Send'),
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: () => _sendMessage(_ctrl.text),
+                      child: const Text('Send'),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

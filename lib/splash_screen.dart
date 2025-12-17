@@ -17,6 +17,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
+    debugPrint('🎬 [Splash] Starting splash screen...');
     _startAnimation();
     _start();
   }
@@ -36,8 +37,16 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _start() async {
     await Future.delayed(const Duration(seconds: 2)); // animation delay
+    debugPrint('🎬 [Splash] Animation complete, calling onDone...');
     if (widget.onDone != null) {
-      await widget.onDone!(); // notify main.dart to navigate
+      try {
+        await widget.onDone!(); // notify main.dart to navigate
+        debugPrint('✅ [Splash] Navigation complete');
+      } catch (e) {
+        debugPrint('❌ [Splash] Error during navigation: $e');
+      }
+    } else {
+      debugPrint('⚠️ [Splash] onDone is null');
     }
   }
 

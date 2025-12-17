@@ -4,6 +4,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'home.dart';
 import 'register.dart';
 import 'driver_dashboard.dart';
+import 'driver_onboarding.dart';
+import 'admin_dashboard.dart';
+import 'error_handler.dart';
+import 'forgot_password.dart';
 
 class Login extends StatefulWidget {
   const Login({Key? key}) : super(key: key);
@@ -16,45 +20,131 @@ class _LoginPageState extends State<Login> {
   final TextEditingController emailCtrl = TextEditingController();
   final TextEditingController passwordCtrl = TextEditingController();
   bool _obscurePassword = true;
+  bool _isLoading = false;
 
-  final supabase = Supabase.instance.client;
-
-  // login.dart (only function snippet shown—insert into your file)
   Future<void> _login() async {
+    final email = emailCtrl.text.trim();
+    final password = passwordCtrl.text.trim();
+
+    // Validation
+    if (email.isEmpty || password.isEmpty) {
+      ErrorHandler.showErrorSnackBar(context, 'Please fill in all fields');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
     try {
+      debugPrint('🔐 [Login] Attempting login for: $email');
+      final supabase = Supabase.instance.client;
+      
+      // Add timeout to sign in
       final res = await supabase.auth.signInWithPassword(
-        email: emailCtrl.text.trim(),
-        password: passwordCtrl.text.trim(),
+        email: email,
+        password: password,
+      ).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () {
+          throw AppException(
+            message: 'Login timeout. Check your internet connection and try again.',
+            code: 'login_timeout',
+          );
+        },
       );
 
+      debugPrint('✅ [Login] Sign in successful');
+      
       final userId = res.user?.id;
-      if (userId == null) throw 'Login failed';
+      if (userId == null) {
+        throw AppException(
+          message: 'Login failed: No user ID returned',
+          code: 'no_user_id',
+        );
+      }
 
+      if (!mounted) return;
+
+      // Fetch user profile with timeout
+      debugPrint('📋 [Login] Fetching user profile for: $userId');
       final profile = await supabase
           .from('profiles')
           .select('role')
           .eq('id', userId)
-          .maybeSingle();
-
-      final role = profile?['role'] ?? 'rider';
+          .maybeSingle()
+          .timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              debugPrint('⚠️ [Login] Profile fetch timeout - using default role');
+              return null;
+            },
+          );
 
       if (!mounted) return;
 
-      if (role == 'driver') {
+      final role = profile?['role'] ?? 'rider';
+      debugPrint('👤 [Login] User role: $role');
+
+      // Route based on user role
+      if (role == 'admin') {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const DriverDashboard()),
+          MaterialPageRoute(builder: (_) => const AdminDashboardPage()),
         );
+      } else if (role == 'driver') {
+        try {
+          // Check if license has been uploaded; if not, send to onboarding
+          final driver = await supabase
+              .from('drivers')
+              .select('license_photo_url')
+              .eq('id', userId)
+              .maybeSingle();
+
+          if (!mounted) return;
+
+          final needsOnboarding = driver == null || driver['license_photo_url'] == null;
+
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => needsOnboarding
+                  ? const DriverOnboarding()
+                  : const DriverDashboard(),
+            ),
+          );
+        } catch (e) {
+          debugPrint('❌ [Login] Error checking driver onboarding: $e');
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const DriverDashboard()),
+          );
+        }
       } else {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const Home()),
         );
       }
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ErrorHandler.logError('login', e);
+      ErrorHandler.showErrorSnackBar(context, e);
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      ErrorHandler.logError('login', e);
+      ErrorHandler.showErrorSnackBar(context, AppException(
+        message: 'Failed to fetch user profile. Please try again.',
+        code: 'fetch_profile_error',
+        originalError: e,
+      ));
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Login failed: $e')));
+      if (!mounted) return;
+      ErrorHandler.logError('login', e);
+      ErrorHandler.showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
@@ -100,7 +190,14 @@ class _LoginPageState extends State<Login> {
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ForgotPasswordPage(),
+                      ),
+                    );
+                  },
                   child: const Text("Forgot Password?"),
                 ),
               ),
@@ -117,11 +214,20 @@ class _LoginPageState extends State<Login> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: _login,
-                  child: const Text(
-                    "Login",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
+                  onPressed: _isLoading ? null : _login,
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : const Text(
+                          "Login",
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
                 ),
               ),
 
@@ -142,6 +248,7 @@ class _LoginPageState extends State<Login> {
                   ),
                 ],
               ),
+              
             ],
           ),
         ),

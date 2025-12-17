@@ -28,6 +28,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // Add deep link redirect scheme for password reset
+        manifestPlaceholders["appAuthRedirectScheme"] = "io.campusride"
     }
 
     buildTypes {

@@ -1,7 +1,11 @@
 // lib/register.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'login.dart';
+import 'driver_register.dart';
+import 'error_handler.dart';
 
 class Register extends StatefulWidget {
   const Register({Key? key}) : super(key: key);
@@ -30,23 +34,27 @@ class _RegisterState extends State<Register> {
     final password = _passwordCtrl.text;
     final confirmPassword = _confirmPasswordCtrl.text;
 
-    if (fullName.isEmpty || email.isEmpty || password.isEmpty || confirmPassword.isEmpty) {
-      _showMessage('Please fill in all fields.');
+    // Validation
+    if (fullName.isEmpty ||
+        email.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty) {
+      ErrorHandler.showErrorSnackBar(context, 'Please fill in all fields');
       return;
     }
 
     if (!RegExp(r"^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$").hasMatch(email)) {
-      _showMessage('Invalid email format.');
+      ErrorHandler.showErrorSnackBar(context, 'Invalid email format');
       return;
     }
 
     if (password.length < 6) {
-      _showMessage('Password must be at least 6 characters.');
+      ErrorHandler.showErrorSnackBar(context, 'Password must be at least 6 characters');
       return;
     }
 
     if (password != confirmPassword) {
-      _showMessage('Passwords do not match.');
+      ErrorHandler.showErrorSnackBar(context, 'Passwords do not match');
       return;
     }
 
@@ -56,40 +64,70 @@ class _RegisterState extends State<Register> {
       final res = await supabase.auth.signUp(email: email, password: password);
 
       if (res.user == null) {
-        _showMessage('Failed to create account. Please try again.');
-        setState(() => _isLoading = false);
-        return;
+        throw AppException(
+          message: 'Failed to create account. Please try again.',
+          code: 'signup_failed',
+        );
       }
 
       final userId = res.user!.id;
+      debugPrint('🔍 [register] Auth user created:');
+      debugPrint('   userId: $userId');
+      debugPrint('   email: ${res.user!.email}');
+      debugPrint('   Attempting to insert profile with id=$userId');
 
       // Insert profile (only full_name and role)
-      await supabase.from('profiles').insert({
-        'id': userId,
-        'full_name': fullName,
-        'role': 'passenger',
-      });
-
-      _showMessage('Registration successful! Please log in.', isError: false);
-
-      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Login()));
-    } on AuthException catch (e) {
-      if (e.message.contains('already registered')) {
-        _showMessage('Email already exists. Please log in.');
-      } else {
-        _showMessage(e.message);
+      try {
+        debugPrint('🔄 [register] Inserting into profiles table...');
+        await supabase.from('profiles').insert({
+          'id': userId,
+          'full_name': fullName,
+          'role': 'passenger',
+        });
+        debugPrint('✅ [register] Profile inserted successfully');
+      } catch (e) {
+        // If insert fails (commonly due to RLS or session not active),
+        // save pending profile to SharedPreferences and complete signup.
+        ErrorHandler.logError('register - profile insert failed', e);
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final pending = json.encode({
+            'id': userId,
+            'full_name': fullName,
+            'role': 'passenger',
+          });
+          await prefs.setString('pending_profile', pending);
+        } catch (_) {}
       }
-    } catch (e) {
-      _showMessage('Unexpected error: $e');
-    } finally {
-      setState(() => _isLoading = false);
-    }
-  }
 
-  void _showMessage(String message, {bool isError = true}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.green),
-    );
+      if (!mounted) return;
+      ErrorHandler.showSuccessSnackBar(context, 'Registration successful! Please log in.');
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const Login()),
+      );
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ErrorHandler.logError('register', e);
+      ErrorHandler.showErrorSnackBar(context, e);
+    } on PostgrestException catch (e) {
+      if (!mounted) return;
+      ErrorHandler.logError('register', e);
+      ErrorHandler.showErrorSnackBar(context, AppException(
+        message: 'Failed to create profile. Please try again.',
+        code: 'profile_creation_failed',
+        originalError: e,
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ErrorHandler.logError('register', e);
+      ErrorHandler.showErrorSnackBar(context, e);
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   // ---------- UI ----------
@@ -110,21 +148,42 @@ class _RegisterState extends State<Register> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 6))],
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('Register', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: campusGreen)),
+                    Text(
+                      'Register',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: campusGreen,
+                      ),
+                    ),
                     const SizedBox(height: 24),
-                    _buildTextField(_fullNameCtrl, 'Full Name', 'Enter your full name'),
+                    _buildTextField(
+                      _fullNameCtrl,
+                      'Full Name',
+                      'Enter your full name',
+                    ),
                     const SizedBox(height: 16),
                     _buildEmailField(),
                     const SizedBox(height: 16),
                     _buildPasswordField(_passwordCtrl, 'Password'),
                     _passwordStrengthIndicator(_passwordCtrl.text),
                     const SizedBox(height: 16),
-                    _buildPasswordField(_confirmPasswordCtrl, 'Confirm Password', isConfirm: true),
+                    _buildPasswordField(
+                      _confirmPasswordCtrl,
+                      'Confirm Password',
+                      isConfirm: true,
+                    ),
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
@@ -133,15 +192,35 @@ class _RegisterState extends State<Register> {
                         style: ElevatedButton.styleFrom(
                           backgroundColor: campusGreen,
                           padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
-                        child: const Text('Register', style: TextStyle(fontSize: 18)),
+                        child: const Text(
+                          'Register',
+                          style: TextStyle(fontSize: 18),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const Login())),
+                      onPressed: () => Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(builder: (_) => const Login()),
+                      ),
                       child: const Text('Already have an account? Log in'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const RegisterDriver(),
+                        ),
+                      ),
+                      child: const Text(
+                        "Register as Driver",
+                        style: TextStyle(decoration: TextDecoration.underline),
+                      ),
                     ),
                   ],
                 ),
@@ -161,7 +240,12 @@ class _RegisterState extends State<Register> {
   }
 
   // ---------- TEXT FIELDS ----------
-  Widget _buildTextField(TextEditingController ctrl, String label, String hint, {TextInputType keyboard = TextInputType.text}) {
+  Widget _buildTextField(
+    TextEditingController ctrl,
+    String label,
+    String hint, {
+    TextInputType keyboard = TextInputType.text,
+  }) {
     return TextField(
       controller: ctrl,
       keyboardType: keyboard,
@@ -169,7 +253,10 @@ class _RegisterState extends State<Register> {
         labelText: label,
         hintText: hint,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
       ),
     );
   }
@@ -182,7 +269,10 @@ class _RegisterState extends State<Register> {
         labelText: 'Email',
         hintText: "We'll never share your email",
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
         errorText: _emailError,
       ),
       onChanged: (value) {
@@ -195,16 +285,27 @@ class _RegisterState extends State<Register> {
     );
   }
 
-  Widget _buildPasswordField(TextEditingController ctrl, String label, {bool isConfirm = false}) {
+  Widget _buildPasswordField(
+    TextEditingController ctrl,
+    String label, {
+    bool isConfirm = false,
+  }) {
     return TextField(
       controller: ctrl,
       obscureText: isConfirm ? _obscureConfirm : _obscurePassword,
       decoration: InputDecoration(
         labelText: label,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
         suffixIcon: IconButton(
-          icon: Icon((isConfirm ? _obscureConfirm : _obscurePassword) ? Icons.visibility : Icons.visibility_off),
+          icon: Icon(
+            (isConfirm ? _obscureConfirm : _obscurePassword)
+                ? Icons.visibility
+                : Icons.visibility_off,
+          ),
           onPressed: () {
             setState(() {
               if (isConfirm) {
@@ -224,7 +325,9 @@ class _RegisterState extends State<Register> {
   Widget _passwordStrengthIndicator(String password) {
     Color color = Colors.red;
     String text = 'Weak';
-    if (password.length >= 6 && RegExp(r'[A-Z]').hasMatch(password) && RegExp(r'[0-9]').hasMatch(password)) {
+    if (password.length >= 6 &&
+        RegExp(r'[A-Z]').hasMatch(password) &&
+        RegExp(r'[0-9]').hasMatch(password)) {
       color = Colors.green;
       text = 'Strong';
     } else if (password.length >= 6) {

@@ -55,9 +55,9 @@ class SupabaseService {
 
     final result = await _supabase.from('messages').insert({
       'ride_id': rideId,
-      'from_user_id': fromUserId,
-      'to_user_id': toUserId,
-      'content': content,
+      'from_user': fromUserId,
+      'to_user': toUserId,
+      'message': content,
       'created_at': now,
     }).select(); // select returns the inserted rows (optional)
 
