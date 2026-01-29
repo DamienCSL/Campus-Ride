@@ -52,6 +52,7 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
   Animation<LatLng>? _driverAnimation;
 
   RealtimeChannel? _rideSubscription;
+  String? _rideStatus;
 
   @override
   void initState() {
@@ -62,6 +63,7 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
     _vehicleInfo = widget.driver['vehicle'] ?? 'Vehicle';
     _plate = widget.driver['plate'] ?? 'N/A';
     _driverPhone = widget.driver['phone'] ?? 'Not available';
+    _rideStatus = widget.driver['status']?.toString();
 
     // Initialize with a default position, will be updated by live tracking
     _driverPos = LatLng(
@@ -70,10 +72,31 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
     );
 
     _updateMarkers();
-    _fetchAndDisplayRoutes();
+    _loadRideStatusAndRoutes();
     _loadInitialDriverLocation();
     _startMockLiveMovement();
     _listenForRideCompletion();
+  }
+
+  Future<void> _loadRideStatusAndRoutes() async {
+    // If rideId present, fetch latest status to align route target with driver_navigation logic
+    if (widget.rideId != null) {
+      try {
+        final supabase = Supabase.instance.client;
+        final rideRow = await supabase
+            .from('rides')
+            .select('status')
+            .eq('id', widget.rideId!)
+            .maybeSingle();
+        if (rideRow != null) {
+          _rideStatus = rideRow['status']?.toString();
+        }
+      } catch (e) {
+        debugPrint('Error loading ride status: $e');
+      }
+    }
+
+    await _fetchAndDisplayRoutes();
   }
 
   /// Load initial driver location from database
@@ -145,12 +168,16 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
             final status = newData['status'];
             debugPrint('🚗 [Tracking] Ride status update: $status');
             if (!mounted) return;
+            _rideStatus = status?.toString();
             if (status == 'completed') {
               debugPrint('✅ [Tracking] Ride completed, showing dialog');
               _showCompletionDialog();
             } else if (status == 'cancelled') {
               debugPrint('❌ [Tracking] Ride cancelled, exiting tracking');
               Navigator.of(context).pop(true);
+            } else {
+              // Refresh route when status changes (e.g., arriving -> ongoing)
+              _fetchAndDisplayRoutes();
             }
           },
         )
@@ -350,33 +377,29 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
     return R * c * 1000; // Return in meters
   }
 
-  /// Fetch route polylines from Google Directions API
+  /// Fetch route polyline aligned with driver_navigation logic
   Future<void> _fetchAndDisplayRoutes() async {
     try {
-      // Route from driver to pickup (blue)
-      final driverToPickupPoints = await _fetchRoutePolyline(_driverPos!, widget.pickup);
-      if (driverToPickupPoints.isNotEmpty) {
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId('driver_to_pickup'),
-            points: driverToPickupPoints,
-            color: Colors.blue,
-            width: 5,
-          ),
-        );
-      }
+      if (_driverPos == null) return;
 
-      // Route from pickup to destination (green)
-      final pickupToDestPoints = await _fetchRoutePolyline(widget.pickup, widget.destination);
-      if (pickupToDestPoints.isNotEmpty) {
-        _polylines.add(
-          Polyline(
-            polylineId: const PolylineId('pickup_to_dest'),
-            points: pickupToDestPoints,
-            color: Colors.green,
-            width: 5,
-          ),
-        );
+      // Match driver_navigation: go to pickup when arriving/accepted; otherwise destination
+      final status = _rideStatus ?? widget.driver['status']?.toString() ?? '';
+      final goingToPickup = status == 'arriving' || status == 'accepted' || status == 'pending' || status == 'assigned';
+      final target = goingToPickup ? widget.pickup : widget.destination;
+
+      final points = await _fetchRoutePolyline(_driverPos!, target);
+
+      if (points.isNotEmpty) {
+        _polylines
+          ..clear()
+          ..add(
+            Polyline(
+              polylineId: const PolylineId('current_route'),
+              points: points,
+              color: Colors.blue,
+              width: 5,
+            ),
+          );
       }
 
       if (mounted) {
@@ -522,7 +545,7 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
       final supabase = Supabase.instance.client;
       final rideData = await supabase
           .from('rides')
-          .select('driver_id')
+          .select('driver_id, status')
           .eq('id', widget.rideId!)
           .maybeSingle();
       
@@ -530,6 +553,7 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
         // Update widget driver with the actual driver_id
         widget.driver['driver_id'] = rideData['driver_id'];
         widget.driver['id'] = widget.driver['id'] ?? rideData['driver_id'];
+        _rideStatus = rideData['status']?.toString() ?? _rideStatus;
         return rideData['driver_id'] as String;
       }
     } catch (e) {
@@ -613,6 +637,10 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
     final driverName = _driverName;
     final vehicleInfo = _vehicleInfo;
     final plate = _plate;
+    final status = _rideStatus ?? widget.driver['status']?.toString() ?? '';
+    final goingToPickup = status == 'arriving' || status == 'accepted' || status == 'pending' || status == 'assigned';
+    final routingLabel = goingToPickup ? 'Routing to Pickup' : 'Routing to Destination';
+    final routingColor = goingToPickup ? Colors.blue : Colors.green;
 
     return Scaffold(
       appBar: AppBar(
@@ -710,6 +738,26 @@ class _DriverTrackingPageState extends State<DriverTrackingPage>
                     ],
                   ),
                   const SizedBox(height: 16),
+                  // Current routing badge
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Chip(
+                      backgroundColor: routingColor.withOpacity(0.12),
+                      label: Text(
+                        routingLabel,
+                        style: TextStyle(
+                          color: routingColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      avatar: Icon(
+                        goingToPickup ? Icons.navigation : Icons.flag,
+                        color: routingColor,
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   // Route info
                   Container(
                     padding: const EdgeInsets.all(12),

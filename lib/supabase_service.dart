@@ -6,13 +6,28 @@ import 'package:realtime_client/realtime_client.dart' show RealtimeChannel, Post
 class SupabaseService {
   static final _supabase = Supabase.instance.client;
 
+  static Map<String, dynamic> _normalizeMessageRow(Map<String, dynamic> row) {
+    final fromUser = row.containsKey('from_user') ? row['from_user'] : (row.containsKey('sender_id') ? row['sender_id'] : (row.containsKey('sender') ? row['sender'] : (row.containsKey('user_id') ? row['user_id'] : null)));
+    final toUser = row.containsKey('to_user') ? row['to_user'] : (row.containsKey('receiver_id') ? row['receiver_id'] : (row.containsKey('receiver') ? row['receiver'] : (row.containsKey('peer_id') ? row['peer_id'] : null)));
+    final message = row.containsKey('message') ? row['message'] : (row.containsKey('content') ? row['content'] : (row.containsKey('text') ? row['text'] : (row.containsKey('message_text') ? row['message_text'] : null)));
+    final createdAt = row.containsKey('created_at') ? row['created_at'] : (row.containsKey('createdAt') ? row['createdAt'] : null);
+
+    final normalized = <String, dynamic>{
+      'ride_id': row['ride_id'] ?? row['rideId'],
+      'from_user': fromUser,
+      'to_user': toUser,
+      'message': message,
+      'created_at': createdAt,
+    };
+    return normalized;
+  }
+
   /// Subscribe to messages for a particular ride.
   /// Returns the RealtimeChannel. Call `Supabase.instance.client.removeChannel(channel)` when you want to stop listening.
   static RealtimeChannel subscribeMessages(
     String rideId,
     void Function(Map<String, dynamic> message) onMessage,
   ) {
-    final topic = 'public:messages:ride_id=eq.$rideId'; // descriptive topic (not required but OK)
     final channel = _supabase.channel('chat:$rideId');
 
     channel
@@ -28,13 +43,11 @@ class SupabaseService {
             value: rideId,
           ),
           callback: (payload) {
-            if (payload.newRecord != null) {
-              try {
-                final record = Map<String, dynamic>.from(payload.newRecord!);
-                onMessage(record);
-              } catch (e) {
-                // ignore malformed payloads
-              }
+            try {
+              final record = Map<String, dynamic>.from(payload.newRecord);
+              onMessage(_normalizeMessageRow(record));
+            } catch (e) {
+              // ignore malformed payloads
             }
           },
         )
@@ -52,17 +65,23 @@ class SupabaseService {
     required String content,
   }) async {
     final now = DateTime.now().toIso8601String();
-
-    final result = await _supabase.from('messages').insert({
-      'ride_id': rideId,
-      'from_user': fromUserId,
-      'to_user': toUserId,
-      'message': content,
-      'created_at': now,
-    }).select(); // select returns the inserted rows (optional)
-
-    if (result == null) {
-      throw Exception('Failed to insert message');
+    try {
+      await _supabase.from('messages').insert({
+        'ride_id': rideId,
+        'from_user': fromUserId,
+        'to_user': toUserId,
+        'message': content,
+        'created_at': now,
+      }).select();
+    } on PostgrestException catch (_) {
+      // Fallback to legacy column names
+      await _supabase.from('messages').insert({
+        'ride_id': rideId,
+        'sender_id': fromUserId,
+        'receiver_id': toUserId,
+        'content': content,
+        'createdAt': now,
+      }).select();
     }
   }
 
@@ -74,10 +93,8 @@ class SupabaseService {
         .eq('ride_id', rideId)
         .order('created_at', ascending: true);
 
-    if (data == null) return [];
-
-    // data is usually a List<dynamic> of maps
-    return List<Map<String, dynamic>>.from(data as List);
+    final list = List<Map<String, dynamic>>.from(data as List);
+    return list.map(_normalizeMessageRow).toList();
   }
 
   /// Unsubscribe and remove a channel created by subscribeMessages().

@@ -148,6 +148,34 @@ CREATE TABLE reviews (
 );
 ```
 
+#### Messages (Chat)
+```sql
+CREATE TABLE messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ride_id UUID REFERENCES rides(id),
+  from_user UUID REFERENCES profiles(id),
+  to_user UUID REFERENCES profiles(id),
+  message TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Enable realtime for messages
+ALTER TABLE messages REPLICA IDENTITY FULL;
+
+-- RLS policies for messages
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+
+-- Users can read messages they sent or received
+CREATE POLICY "Users can read their own messages"
+ON messages FOR SELECT
+USING (auth.uid() = from_user OR auth.uid() = to_user);
+
+-- Users can insert messages where they are the sender
+CREATE POLICY "Users can send messages"
+ON messages FOR INSERT
+WITH CHECK (auth.uid() = from_user);
+```
+
 ### 5. Storage Setup
 
 Create storage buckets in Supabase:
@@ -293,6 +321,19 @@ lib/
 ### RLS Policy Errors
 - Verify user is authenticated before queries
 - Check role-based policy conditions
+
+### Chat Not Working
+**Problem**: Messages not sending or receiving between rider and driver
+
+**Solution**:
+1. **Create messages table** - Run `setup_messages_table.sql` in Supabase SQL Editor
+2. **Enable Realtime** - Ensure realtime is enabled for messages table:
+   ```sql
+   ALTER TABLE messages REPLICA IDENTITY FULL;
+   ```
+3. **Check RLS policies** - Verify messages table has proper RLS policies
+4. **Test connection** - Check Supabase logs for errors
+5. **Verify ride_id** - Ensure ride exists and both users have access
 - Ensure user has necessary table permissions
 
 ## 📝 Development Notes
